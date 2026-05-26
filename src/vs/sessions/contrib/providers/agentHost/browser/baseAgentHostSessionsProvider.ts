@@ -9,7 +9,7 @@ import { Codicon } from '../../../../../base/common/codicons.js';
 import { structuralEquals } from '../../../../../base/common/equals.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { IMarkdownString, MarkdownString } from '../../../../../base/common/htmlContent.js';
-import { Disposable, DisposableMap, DisposableStore, IDisposable, IReference, MutableDisposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, DisposableMap, DisposableStore, IDisposable, IReference, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { equals } from '../../../../../base/common/objects.js';
 import { autorun, constObservable, derived, derivedOpts, IObservable, ISettableObservable, observableFromPromise, observableValue, observableValueOpts, transaction } from '../../../../../base/common/observable.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
@@ -40,7 +40,7 @@ import { ISessionsManagementService } from '../../../../services/sessions/common
 import { ISendRequestOptions, ISessionChangeEvent } from '../../../../services/sessions/common/sessionsProvider.js';
 import { computePullRequestIcon } from '../../../github/common/types.js';
 import { IGitHubService } from '../../../github/browser/githubService.js';
-import { mapProtocolStatus } from './agentHostDiffs.js';
+import { changesetFilesToChanges, mapProtocolStatus } from './agentHostDiffs.js';
 import { getEffectiveAgents } from '../../../../../platform/agentHost/common/customAgents.js';
 import { createChangesets } from '../../copilotChatSessions/browser/copilotChatSessionsChangesets.js';
 
@@ -432,6 +432,10 @@ export class AgentHostSessionAdapter implements ISession {
 		if (!sessionFileChangesEqual(this.changes.get(), mapped)) {
 			this.changes.set(mapped, undefined);
 		}
+	}
+
+	releaseBranchChanges(): void {
+		this._branchChangesPopulated = false;
 	}
 }
 
@@ -1080,6 +1084,7 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 				return;
 			}
 			const ref = reader.store.add(this.connection.getSubscription(StateComponents.Changeset, target.uri));
+			reader.store.add(toDisposable(() => target.adapter.releaseBranchChanges()));
 			const apply = (state: ChangesetState | Error | undefined) => {
 				if (!state || state instanceof Error) {
 					return;
@@ -1087,18 +1092,7 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 				if (state.status !== 'ready') {
 					return;
 				}
-				const files: IChatSessionFileChange2[] = state.files.map(f => {
-					const after = f.edit.after?.uri;
-					const before = f.edit.before?.uri;
-					const uri = after ?? before ?? f.id;
-					return {
-						uri: URI.parse(uri),
-						originalUri: before ? URI.parse(before) : undefined,
-						modifiedUri: after ? URI.parse(after) : undefined,
-						insertions: f.edit.diff?.added ?? 0,
-						deletions: f.edit.diff?.removed ?? 0,
-					};
-				});
+				const files = changesetFilesToChanges(state.files);
 				target.adapter.setBranchChanges(files);
 			};
 			apply(ref.object.value);
@@ -2046,7 +2040,7 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 		this._refreshSessions();
 	}
 
-	protected async _refreshSessions(): Promise<void> {
+	protected async _refreshSessions(announceExistingAsAdded = false): Promise<void> {
 		const connection = this.connection;
 		if (!connection) {
 			return;
@@ -2063,6 +2057,9 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 
 				const existing = this._sessionCache.get(rawId);
 				if (existing) {
+					if (announceExistingAsAdded) {
+						added.push(existing);
+					}
 					if (existing.update(meta)) {
 						changed.push(existing);
 					}
