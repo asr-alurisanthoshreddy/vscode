@@ -91,7 +91,7 @@
 	flex-direction: row;
 	height: 100%;
 	box-sizing: border-box;
-	padding: 8px 6px;
+	padding: 8px 6px 8px 12px;
 
 	&.archived {
 		color: var(--vscode-descriptionForeground);
@@ -233,6 +233,13 @@
 	}
 
 	.session-title {
+		color: var(--vscode-foreground);
+	}
+
+	/* Strong foreground is reserved for sessions that need attention: */
+	/* unread, input required, or selected. All others use foreground. */
+	&.unread .session-title,
+	&.needs-input .session-title {
 		color: var(--vscode-strongForeground);
 	}
 
